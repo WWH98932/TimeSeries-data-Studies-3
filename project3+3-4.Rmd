@@ -1,0 +1,521 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+## I Introduction
+
+In the model below, we want to find out the relationship between the number of government employees hiring and the number of prviate industry employees hiring. The two set of data were downloaded from Quandl. US national and state-level employment and unemployment statistics, published by the Bureau of Labor Statistics represents the government hiring. US private sector employment and unemployment statistics, published by the Bureau of Labor Statistics represents prviate industry employees hiring. The two set of data is extracted from 1998/01/29 to now, which spans 20 years. The two set of data were released monthly by BLS at the same time. 
+
+In the two sets of data, there are exist seasonlity, trend, and seasonality component. Seasonality is obeserved in the country's boom/bust business cycle, which means more employees are hired both in private and public sector when economy is booming. When debt is rising, people's affordability declines and productivity slows, we usually see a decline in the amount of labor hired by in private and public industry (think about a resession). Seasonal component refers to fluctuations in the data related to calendar cycles. For example, more people might be working for government in the seasonal peak for hiring, and less during other months. In the trend analysis, we know that country's GDP is growing over time and the number of workers, rather than labor participation rate, is growing too, we can come to a conclusion that the number of employees being hired both in public and provate sectors are rising. 
+
+Here we will study the relationship between the number of government employees hiring and the number of prviate industry employees hiring analyzing seanolity, trend, and cycle term. 
+
+
+## II Analysis Results (Modeling and Forecasting Trend, Seasonality, and Cycles)
+Input data
+```{r}
+library(Quandl)
+# Government Employees (thousand) and Private Industry Employees (thousand)
+
+gov <- Quandl("BLSE/CEU9000000001", api_key="QR_sKtW9xGJddDnfzCbT", start_date="1998-01-29")
+pri <- Quandl("BLSE/CEU0500000001", api_key="QR_sKtW9xGJddDnfzCbT", start_date="1998-01-29")
+```
+
+# (a) Produce a time-series plot of our data including the respective ACF and PACF plots
+```{r}
+govts <- ts(gov$Value, start=c(1998, 1), frequency=12)
+plot(govts, ylab=("Government Employee"))
+plot(decompose(govts))
+prits <- ts(pri$Value, start=c(1998, 1), frequency=12)
+plot(prits, ylab=("Private Industry Employee"))
+plot(decompose(prits))
+
+# tsclean() identifies and replaces outliers using series smoothing and decomposition
+#tsclean(govts)
+
+#cycle(govts)
+#cycle(prits)
+plot(aggregate(govts, FUN = mean))
+plot(aggregate(prits, FUN = mean))
+# This will aggregate the cycles and display a year on year trend
+```
+Seasonal component refers to fluctuations in the data related to calendar cycles. For example, more people might be working for government in the seasonal peak for hiring, and less during other months.
+Trend component is the overall pattern of the series: Is the number of government employee/private industry employee increasing or decreasing over time?
+Cycle component consists of decreasing or increasing patterns that are not seasonal. Usually, trend and cycle components are grouped together. Trend-cycle component is estimated using moving averages.
+Finally, part of the series that can't be attributed to seasonal, cycle, or trend components is referred to as residual or error.
+
+Fitting an ARIMA model requires the series to be stationary. A series is said to be stationary when its mean, variance, and autocovariance are time invariant. From visual inspection, both of them are non-stationary.
+The augmented Dickey-Fuller (ADF) test is a formal statistical test for stationarity. The null hypothesis assumes that the series is non-stationary. ADF procedure tests whether the change in Y can be explained by lagged value and a linear trend. If contribution of the lagged value to the change in Y is non-significant and there is a presence of a trend component, the series is non-stationary and null hypothesis will not be rejected.
+
+```{r}
+# Government
+# ADF Test
+library(tseries)
+adf.test(govts)
+# Reject H0: it's stationary time series.
+# Also try KPSS Test
+kpss.test(govts)
+
+# Look at ACF Plot
+acf(gov$Value, lag.max=120, main="ACF of Government Employee")
+# From visual inspection It's non-stationary
+
+# Box Test
+Box.test(govts, lag=1, type="Ljung-Box")
+# Reject Ho, which means it's not white noise
+
+# Private
+adf.test(prits)
+# Accept H0: it's not stationary time series.
+
+# Look at ACF Plot
+acf(pri$Value, lag.max=120, main="ACF of Private Industry Employee")
+# It's not stationary
+
+# Box Test
+Box.test(prits, lag=1, type="Ljung-Box")
+# Reject Ho, which means it's not white noise
+```
+```{r}
+# PACF Plot
+pacf(gov$Value, main="PACF of Government Employee")
+pacf(pri$Value, main="PACF of Private Industry Employee")
+```
+
+# (b) Fit a model that includes, trend, seasonality and cyclical components. 
+Non-stationary series can be corrected by a simple transformation such as differencing. Differencing the series can help in removing its trend or cycles, it can also be used if there is a seasonal pattern at specific lags.
+```{r}
+library(forecast)
+
+# Because of obvious trend, we should try to take the first difference
+ndiffs(govts)
+ndiffs(prits)
+
+# We'll take the first difference
+dgovts <- diff(govts, 1)
+dprits <- diff(prits, 1)
+# Although the govts pass the ADF test, it's weird
+
+# ADF Test
+adf.test(dgovts)
+adf.test(dprits)
+# p-value < 0.05, reject H0: exists unit root. They are stationary now.
+
+# Look at the ACF and PACF again
+tsdisplay(dgovts, lag.max = 48)
+tsdisplay(dprits, lag.max = 48)
+```
+# For Government Employees:
+```{r}
+# Recall the ACF and PACF plot after 1df
+acf(dgovts, lag.max = 48)
+pacf(dgovts, lag.max = 48)
+tsdisplay(dgovts, lag.max=48)
+```
+
+From the ACF and PACF plot of "dgovts", We notice ACF is trailing, so q = 0, basically PACF cut off at about lag.13  and there is a significant spike at lag = (1,2,4,7,9,10,12,13), so we will try all of them: (1,1,0), (2,1,0), (4,1,0), (7,1,0), (9,1,0), (10,1,0), (12,1,0), (13,1,0) and look at their AIC and BIC value.
+And also, we can see in ACF plot, there exists a seasonal factor of 12, so we try plot a figure which lag = 12.
+
+```{r}
+# Take df = 12 because of both trend and seasonality
+tsdisplay(diff(dgovts, 12), lag.max=48)
+```
+We basically removed the influence of seasonal factor now. And hence the seasonal factor in ARIMA model should be 12. Because in the seasonal factor ACF and PACF they both have spikes on 1st S, so the seasonal parameter could be (1,1,1)[12].
+
+```{r}
+# Fit Model: Seasonality + Cycles
+library(forecast)
+Arima(govts, order=c(1,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(2,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(7,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(9,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(10,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(12,1,0), seasonal=list(order=c(1,1,1), period=12))
+Arima(govts, order=c(13,1,0), seasonal=list(order=c(1,1,1), period=12))
+```
+After comparing the AIC we choose $$ARIMA(4,1,0)\times(1,1,1)_{12}$$ Model.
+```{r}
+arima_gov <- Arima(govts, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12))
+```
+
+# For Private Industry Employees:
+Fit model with trend first.
+```{r}
+t<-seq(1998, 2018.1,length=length(prits))
+
+# Fit a quadrtaic trend model
+t2<-t^2
+m1 = lm(prits~t+t2)
+par(mfrow=c(2,1))
+plot(prits, ylab="pri employee", xlab="Time", lwd=2, col='skyblue3', xlim=c(1998,2018))
+lines(t, m1$fit, col="red3",lwd=2)
+plot(t, m1$res, ylab="Residuals", type='l', xlab="Time")
+
+# Look at the ACF and PACF
+par(mfrow=c(2,1))
+acf(m1$res, lag=48, main="Residual Sample Autocorrelations", xlab="Displacement")
+pacf(m1$res, lag=48, main="Residual Sample Partial Autocorrelations", xlab="Displacement")
+
+# Fit a quadrtaic trend + seasonality model (no y-intercept)
+m2 = tslm(prits~0+t+t2+season)
+par(mfrow=c(2,1))
+plot(prits, ylab="pri employee", xlab="Time", lwd=2, col='skyblue3')
+lines(t, m2$fit, col="red3", lwd=2, lty=2)
+plot(t, m2$res, ylab="Residuals", type='l', xlab="Time", lwd=2)
+
+# Look at the ACF and PACF
+par(mfrow=c(2,1))
+acf(m2$res, lag=48, main="Residual Sample Autocorrelations", xlab="Displacement")
+pacf(m2$res, lag=48, main="Residual Sample Partial Autocorrelations", xlab="Displacement")
+
+# Summary of all four plots
+par(mfrow=c(2,2))
+plot(prits, ylab="pri employee", xlab="Time", lwd=2, col='skyblue3', main="prits + fit (trend +seasonality)")
+lines(t, m2$fit, col="red3", lwd=1, lty=2, main="Residuals")
+plot(t, m2$res, ylab="Residuals", type='l', xlab="Time", lwd=2)
+acf(m2$res, lag=48, main="Residual Sample ACF", xlab="Displacement")
+pacf(m2$res, lag=48, main="Residual Sample PACF", xlab="Displacement")
+# The residuals + ACF and PACF suggest cycles
+```
+```{r}
+# Recall the ACF an PACF
+tsdisplay(dprits, lag.max = 48)
+```
+
+From the ACF and PACF plot of "dprits", We notice ACF is trailing, so q = 0 tas well, basically PACF cut off at about lag.12  and there is a significant spike at lag = (1,7,10,12), so we will try all of them: (1,1,0), (7,1,0), (10,1,0), (12,1,0) and look at their AIC and BIC value.
+And also, we can see in ACF plot, there exists a seasonal factor of 12, so we try plot a figure which lag = 12.
+
+```{r}
+# Take df = 12 because of both trend and seasonality
+tsdisplay(diff(dprits, 12), lag.max=48)
+```
+We basically removed the influence of seasonal factor now. And hence the seasonal factor in ARIMA model should be 12. Because in the seasonal factor ACF and PACF they both have spikes on 1st S, so the seasonal parameter could be (1,1,1)[12].
+
+```{r}
+# Fit Model: Quadratic Trend + Seasonality + Cycles
+library(forecast)
+Arima(prits, order=c(1,1,0), xreg = t2, seasonal=list(order=c(1,1,1), period=12))
+Arima(prits, order=c(7,1,0), xreg = t2, seasonal=list(order=c(1,1,1), period=12))
+Arima(prits, order=c(10,1,0), xreg = t2, seasonal=list(order=c(1,1,1), period=12))
+Arima(prits, order=c(12,1,0), xreg = t2, seasonal=list(order=c(1,1,1), period=12))
+```
+After comparing the AIC we choose $$ARIMA(7,1,0)\times(1,1,1)_{12}$$ Model.
+```{r}
+library(forecast)
+arima_pri <- Arima(prits, order=c(7,1,0), seasonal=list(order=c(1,1,1), period=12))
+```
+Now we can have a look at both models if they fit the observed value well.
+```{r}
+# Government Employee
+plot(arima_gov$x, col="red", lwd=2)
+lines(fitted(arima_gov), col="blue")
+legend("topright", legend=c("Data","Fitted"), text.col=c('red','blue'), bty="n")
+grid()
+
+# Private Industry Employee
+plot(arima_pri$x, col="red", lwd=2)
+lines(fitted(arima_pri), col="blue")
+legend("topright", legend=c("Data","Fitted"), text.col=c('red','blue'), bty="n")
+grid()
+```
+
+# (c) Plot the respective residuals vs. fitted values
+```{r}
+# Government Employee
+summary(arima_gov)
+plot(fitted(arima_gov), arima_gov$residuals, pch=16)
+abline(h=0, lwd=2, col="red")
+
+# Private Industry Employee
+summary(arima_pri)
+plot(fitted(arima_pri), arima_pri$residuals, pch=16)
+abline(h=0, lwd=2, col="red")
+```
+
+# (e) Plot the ACF and PACF of the respective residuals
+```{r}
+# For Government Employee
+par(mfrow=c(2,1))
+acf(arima_gov$res, lag.max=48, main="Gov Residual Sample ACF", xlab="Displacement")
+pacf(arima_gov$res, lag.max=48, main="Gov Residual Sample PACF", xlab="Displacement")
+
+# For Private Industry Employee
+acf(arima_pri$res, lag.max=48, main="Pri Residual Sample ACF", xlab="Displacement")
+pacf(arima_pri$res, lag.max=48, main="Pri Residual Sample PACF", xlab="Displacement")
+```
+From the plots, both Government Employee and Private Industry Employee's residuals' Autocorrelations and Partial Autocorrelations is 0 (in the dotted line), our model is pretty good! If we use "tsdiag()" function we can see it clearly:
+```{r}
+tsdiag(arima_gov)
+tsdiag(arima_pri)
+```
+The plot shows that both gov and pri:
+The standard deviation of the residuals is basically between [-1,1], residual's autocorrelations is 0 and The p value of the Ljung-Box test is above 0.05. Nice!
+
+# (f) Plot the respective CUSUM
+```{r}
+library(strucchange)
+# Government Employee
+plot(efp(arima_gov$res ~ 1, type = "Rec-CUSUM"))
+
+# Private Industry Employee
+plot(efp(arima_pri$res ~ 1, type = "Rec-CUSUM"))
+```
+The function efp returns a one-dimensional empirical process of sums of residuals, if there is a single structural change point $$t\approx2006$$, the recursive CUSUM path starts to depart from its mean 0 at $$t\approx2007, 2015$$. Basically from the two CUSUM plots, for gov, there is a significant spike around 2006; for pri, it has a significant spike around 2007 and 2015. Overall, the sums of residuals don't exceed the boundary line (the boundary line is 5% significant level critical line), the parameters' stability are pretty good.
+
+# (g) Plot the respective Recursive Residuals
+```{r}
+# Government Employee
+y_gov = recresid(arima_gov$res ~ 1)
+plot(y_gov, pch=20, ylab="Recursive Residuals")
+abline(h=0, lwd=2, col="red")
+mean(y_gov)
+
+# Private Industry Employee
+y_pri = recresid(arima_pri$res ~ 1)
+plot(y_pri, pch=20, ylab="Recursive Residuals")
+abline(h=0, lwd=2, col="red")
+mean(y_pri)
+```
+Recursive residuals are standardized one-step-ahead prediction errors. Under the usual assumptions for the linear regression model they are (asymptotically) normal and i.i.d.. If model is correctly specified, recursive residuals have mean zero. From the result above, both models are pretty good!
+
+# (h) Discuss the associated diagnostic statistics
+First, we choose our model with smallest AIC and BIC. From the residuals' ACF and PACF, both Government Employee and Private Industry Employee's residuals' Autocorrelations and Partial Autocorrelations is 0 (in the dotted line), our model is pretty good. The standard deviation of the residuals is basically between [-1,1], residual's autocorrelations is 0 and The p value of the Ljung-Box test is above 0.05. From our recursive residuals, we get a mean about0, so the predictive performance is good.
+
+# (i) Forecast 12-steps ahead
+```{r}
+# Government Employee
+plot(forecast(arima_gov,h=12),shadecols="oldstyle", main="Forecasts of Government Employee")
+
+# Private Industry Employee
+plot(forecast(arima_pri,h=12),shadecols="oldstyle", main="Forecasts of Private Industry Employee")
+```
+
+# (j) Fit an appropriate VAR model using our two variables
+```{r}
+library(vars)
+# Fit a VAR(p) model to the data
+# Note, we need to combine the variables into 1 data frame first:
+y <- cbind(govts, prits)
+y_tot <- data.frame(y)
+
+# To fit a VAR(p) model, simply call 'VAR' and set p=value
+VARselect(y_tot, lag.max=10, type="const")
+# It's VAR(9) model
+y_model <- VAR(y_tot,p=9)
+summary(y_model)
+# The ourtput from summary are cij, cov, and corr.
+```
+A 9-th order VAR, denoted VAR(9), is
+$$y_{t}=c+A_{1}y_{t-1}+A_{2}y_{t-2}+...+A_{9}y_{t-9}+e_{9}$$
+```{r}
+# Plot the fit and orginal data
+#plot(y_model)
+
+# Cross-Correlation Function is a good way to see if government employee and private industry employee has correlation
+ccf(gov$Value, pri$Value, lag=120, main="Gov and Private Employee")
+```
+From CCF plot there is a significant correlation that peaks at a lag of $$\approx70$$. From the summary of VAR(9) model, we get the regression results VAR(9) model equation 1:
+$$govts=c+gov_{t-k}+prits_{t-k}$$
+Equation 2:
+$$prits=c+gov_{t-k}+prits_{t-k}$$
+From the diagram of fit plot for govts and prits, both of them fit the original data very well. From the with residuals plot, they have a zero mean and a nearly equal variance, in ACF and PACF plot, there are no significant spikes and the all within the border, so the residuals are white noise.
+
+# (k) Compute, plot, and interpret the respective impulse response functions
+```{r}
+# Impulse Response Function
+irf(y_model)
+plot(irf(y_model, n.ahead=36))
+```
+For the first plot, the upper part is Own-Variable Impulse Response Effect of gov's shock on subsequent gov: Remains in a small level (little movement at all times). The lower part is Cross-Variable Impulse Response Effect of gov's shock on subsequent private: Initially produces no movement, then builds up, peaking at around 7, 18 and 30 months. 
+For the second plot, the upper part is Cross-Variable Impulse Response Effect of private's shock on subsequent gov: Remains in a small level (little movement at all times). The lower part is Own-Variable Impulse Response Effect of private's shock on subsequent private: Initially a large effect and keeps going up till around 18 months but then decays slowly.
+
+# (l) Perform a Granger-Causality test on our variables
+```{r}
+# I use lag = 9, consistent with the VAR model
+grangertest(prits ~ govts, order = 9)
+grangertest(govts ~ prits, order = 9)
+```
+The first Granger Causality Test is trying to answer: Do government employee "Granger-cause" private industry employee? And the null hypothesis is: Government employee doesn't "Granger-cause" private industry employee (the past values of govts do not help in predicting the value of prits). With p-value << 0.05, we reject H0.
+The second Granger Causality Test is trying to answer: Do private industry employee "Granger-cause" government employee? And the null hypothesis is: Private industry employee doesn't "Granger-cause" private industry employee (the past values of prits do not help in predicting the value of govts). With p-value << 0.05, we reject H0 as well!
+
+# (m) Use our VAR model to forecast 12-steps ahead
+```{r}
+#Forecast
+#holdout_matrix = hold out data
+#var.predict <- predict(object=y_model, n.ahead=12, dumvar=holdout_matrix);
+var.predict <- predict(object=y_model, n.ahead=12)
+plot(var.predict)
+
+# Compare with previous ARIMA model
+par(mfrow=c(2,1))
+plot(forecast(arima_gov,h=12),shadecols="oldstyle", main="Forecasts of Government Employee")
+plot(forecast(arima_pri,h=12),shadecols="oldstyle", main="Forecasts of Private Industry Employee")
+```
+From a theoretical perspective, VAR does not include moving-average (MA) terms and approximates any existing MA patterns by extra autoregressives lags, which is a less parsimonious solution than directly including MA terms as in an ARIMA model. From the graphs, we can see the forecast of VAR models has a greater error bands than ARIMA models, which may lead to a conclusion that for our case VAR is less accuracy than ARIMA model. BUT it still need to be tested by like constructing a rolling window within our data and predict.
+
+# (n-a) Use a recursive backtesting scheme, and forecast 12-steps ahead at each iteration. Provide a plot showing the MAPE over each iteration.
+```{r}
+# First we partition our data set into an estimation (test) set and a prediction (train) set
+# In this part we use govts data, year = 2008 as the interval
+train <- window(govts, end=2007.99)
+test <- window(govts, start=2008.00)
+length(train)
+length(test)
+
+# Set 12-steps ahead and use n to roll the window
+h <- 12
+n <- 120
+
+# Start a loop to do 12-steps ahead rolling forecast (recursive)
+#fcasts <- ts(numeric(n), start=2008 + 1/12, freq=12)
+fcasts <- vector(mode = "list")
+MAPE.12step <- vector()
+for (i in 1:n) { # start rolling forecast 
+  # start from 2008, every time one more month included 
+  # expending the training set window
+  win.gov <- window(govts, end=2008 + (i-1)/12)
+  test.gov <- window(govts, start=2008 + (i)/12)
+  fit <- arima(win.gov, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12)) 
+  fcasts <- forecast(fit, h = 12)
+  # If we want to see the forecast results, use fcasts[[i]] <- forecast(fit, h = 12)
+  #a <- data.frame(sapply(fcasts[1:i], `[`, 4))
+  df.fcasts = data.frame(fcasts) ##Frame the forecast values
+  df.test = data.frame(test.gov)
+  for(j in 1:i){ ##Run a loop to calculate MAPE
+    # extract the actual value and predicted value
+    predicted <- df.fcasts[j,1]
+    actual <- df.test[j,1]
+    mape = (100/j)*abs((actual - predicted)/actual)
+    MAPE.12step = c(MAPE.12step, mape)
+  }
+}
+
+# Plot MAPE
+plot(MAPE.12step, pch = 20)
+```
+
+
+# (n-b) Shorten our forecast horizon to only 1-step ahead
+```{r}
+# Set 1-step ahead and use n to roll the window
+h <- 1
+n <- 120
+
+# Start a loop to do 1-steps ahead rolling forecast (recursive)
+#fcasts <- ts(numeric(n), start=2008 + 1/12, freq=12)
+fcasts <- vector(mode = "list")
+MAPE.1step <- vector()
+for (i in 1:n) { # start rolling forecast 
+  # start from 2008, every time one more month included 
+  # expending the training set window
+  win.gov <- window(govts, end=2008 + (i-1)/12)
+  test.gov <- window(govts, start=2008 + (i)/12)
+  fit <- arima(win.gov, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12)) 
+  fcasts <- forecast(fit, h = 1)
+  df.fcasts = data.frame(fcasts) ##Frame the forecast values
+  df.test = data.frame(test.gov)
+  for(j in 1:i){ ##Run a loop to calculate MAPE
+    # extract the actual value and predicted value
+    predicted <- df.fcasts[j,1]
+    actual <- df.test[j,1]
+    mape = (100/j)*abs((actual - predicted)/actual)
+    MAPE.1step = c(MAPE.1step, mape)
+  }
+}
+
+# Plot MAPE
+plot(MAPE.1step, pch = 20)
+```
+
+# (n-c) Analyze predictive performance
+From the two plots, we can see at longer horizon forecasts, the MAPE mainly concentrat in very small values, close to 0. From the defination of the mean absolute percentage error (MAPE), it is a measure of prediction accuracy of a forecasting method in statistics, for example in our ARIMA model trend estimation.
+$$MAPE=\frac{100}{n}\sum_{t=1}^{n}\left|\frac{A_{t}-F_{t}}{A_{t}}\right|$$
+Hence with more smaller MAPE values, we can say that our model perform better at longer horizon forecasts.
+
+# (n-d) Test our model using a moving window backtesting scheme
+```{r}
+# Set 12-steps ahead and use n to roll the window
+h <- 12
+n <- 120
+
+# Start a loop to do 12-steps ahead rolling forecast (moving)
+#fcasts <- ts(numeric(n), start=2008 + 1/12, freq=12)
+fcasts_moving <- vector(mode = "list")
+MAPE_12step_m <- vector()
+for (i in 1:n) { # start rolling forecast 
+  # start from 2008, every time one more month included 
+  win.gov_moving <- window(govts, start=1998 + (i-1)/12, end=2008 + (i-1)/12)
+  # moving the training set window
+  test.gov <- window(govts, start=2008 + (i)/12)
+  fit <- arima(win.gov_moving, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12)) 
+  fcasts_moving <- forecast(fit, h = 12)
+  #a <- data.frame(sapply(fcasts[1:i], `[`, 4))
+  df.fcasts_moving = data.frame(fcasts_moving) ##Frame the forecast values
+  df.test_moving = data.frame(test.gov)
+  for(j in 1:i){ ##Run a loop to calculate MAPE
+    # extract the actual value and predicted value
+    predicted_moving <- df.fcasts_moving[j,1]
+    actual <- df.test[j,1]
+    mape_m = actual - predicted_moving
+    MAPE_12step_m = c(MAPE_12step_m, mape_m)
+  }
+}
+
+# Plot MAPE
+plot(MAPE_12step_m, pch = 20)
+```
+
+```{r}
+# Set 12-steps ahead and use n to roll the window
+h <- 1
+n <- 120
+
+# Start a loop to do 12-steps ahead rolling forecast (moving)
+#fcasts <- ts(numeric(n), start=2008 + 1/12, freq=12)
+fcasts_moving <- vector(mode = "list")
+MAPE_1step_m <- vector()
+for (i in 1:n) { # start rolling forecast 
+  # start from 2008, every time one more month included 
+  win.gov_moving <- window(govts, start=1998 + (i-1)/12, end=2008 + (i-1)/12)
+  # expanding the training set window
+  test.gov <- window(govts, start=2008 + (i)/12)
+  fit <- arima(win.gov_moving, order=c(4,1,0), seasonal=list(order=c(1,1,1), period=12)) 
+  fcasts_moving <- forecast(fit, h = 1)
+  #a <- data.frame(sapply(fcasts[1:i], `[`, 4))
+  df.fcasts_moving = data.frame(fcasts_moving) ##Frame the forecast values
+  df.test_moving = data.frame(test.gov)
+  for(j in 1:i){ ##Run a loop to calculate MAPE
+    # extract the actual value and predicted value
+    predicted_moving <- df.fcasts_moving[j,1]
+    actual <- df.test[j,1]
+    mape_m = actual - predicted_moving
+    MAPE_1step_m = c(MAPE_1step_m, mape_m)
+  }
+}
+
+# Plot MAPE
+plot(MAPE_1step_m, pch = 20)
+```
+
+# (n-e) Compare the two schemes
+The errors found using both recursive backtesting scheme and moving average backtesting scheme are pretty small, which means the Predictive Performanceo of our model is good. Further more, the errors using moving average backtesting scheme are greater than using recursive backtesting scheme, the main reason is: when using recursive backtesting scheme, our training set keeps expending, which means we can use more data to predict. In moving backtesting scheme, the length of training window is fixed and it keeps moving without expending, so its predictive performance is not as good as recursive.
+
+## III
+Conclusion
+a. The number of Government Employee and Private Industry Employee are time series with trend, seasonality and cycle.
+b. Before analysis, using Unit Root Tests like ADF Test and Dickey-Fuller Test, looking at the ACF/PACF to test stationary, white noise. As non-stationary time series, before doing any analysis we should take difference and test the statioinary again.
+c. Instead of using auto.arima and let R do all the works, we compute it by looking at associated diagnostic statistics like AIC/BIC, ACF/PACF and found ARIMA(4,1,0)(1,1,1)[12] fits the government employee series best and ARIMA(7,1,0)(1,1,1)[12] fits the private industry employee series best.
+d. Test the ARIMA model residuals again, look at the fitting performance, our models are pretty good. We can apply it to forecasting.
+e. After constructing the VAR model and the causality test, they do have some relationship.
+f. In the backtesting part, we found the predictive performance of our ARIMA model is good.
+
+For future work, we can try different time series like stock price and return. Figure out why a non-stationary time series pass the unit root test. Figure out the backtesting, a moving window performances worse than a recursive window, what is the exact reason. Later we can try to apply GARCH model to it, or try different frequencies and combine them.
+
+## IV
+We get our data from Quandl. Other references are as follows:
+1. Seasonal ARIMA Models http://rstudio-pubs-static.s3.amazonaws.com/21465_653278de4ce44fefa846002156e9b10a.html
+2. Structural Breaks in Time Series Analysis https://socialsciences.mcmaster.ca/racinej/762/files/milewski-project.pdf
+3. Introduction to Forecasting with ARIMA in R https://www.datascience.com/blog/introduction-to-forecasting-with-arima-in-r-learn-data-science-tutorials
+4. Variations on rolling forecasts https://robjhyndman.com/hyndsight/rolling-forecasts/
+
